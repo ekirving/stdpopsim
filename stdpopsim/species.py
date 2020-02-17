@@ -159,11 +159,17 @@ class Species(object):
             position = random.randrange(chrom.length - length)
 
         if genetic_map is None:
+            logger.debug(
+                    "Making flat recombination map "
+                    f"{chrom.id}:{position}-{position+length}")
             gm = None
             recomb_map = msprime.RecombinationMap.uniform_map(
                     length, chrom.recombination_rate)
         else:
             # Extract a subset of the full genetic map.
+            logger.debug(
+                    "Making recombination map subset "
+                    f"{chrom.id}:{position}-{position+length}")
             gm = self.get_genetic_map(genetic_map)
             full_recomb_map = gm.get_chromosome_map(chrom.id)
             full_positions = full_recomb_map.get_positions()
