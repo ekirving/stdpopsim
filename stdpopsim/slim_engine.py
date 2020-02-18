@@ -80,8 +80,6 @@ _slim_lower = """
 
     initializeTreeSeq(checkCoalescence=check_coalescence);
     initializeMutationRate(mutation_rate);
-    initializeMutationType("m1", 0.5, "f", 0);
-    initializeGenomicElementType("g1", m1, 1.0);
     initializeGenomicElement(g1, 0, chromosome_length-1);
     initializeRecombinationRate(recombination_rates, recombination_ends);
 }
@@ -275,6 +273,47 @@ function (void)setup(void) {
         }
     }
 
+    // Draw mutations.
+    if (length(drawn_mutations) > 0) {
+        for (i in 0:(ncol(drawn_mutations)-1)) {
+            g = G_start + gdiff(T_0, drawn_mutations[0,i]);
+            mut_type = drawn_mutations[1,i];
+            pop_id = drawn_mutations[2,i];
+            coordinate = drawn_mutations[3,i];
+            sim.registerLateEvent(NULL,
+                "{dbg(self.source); " +
+                "add_mut(m"+mut_type+", p"+pop_id+", "+coordinate+");}",
+                g, g);
+        }
+    }
+
+    // Setup fitness callbacks.
+    if (length(fitness_callbacks) > 0) {
+        for (i in 0:(ncol(fitness_callbacks)-1)) {
+            g = G_start + gdiff(T_0, fitness_callbacks[0,i]);
+            s_id = asInteger(fitness_callbacks[1,i]);
+            mut_type = asInteger(fitness_callbacks[2,i]);
+            pop_id = asInteger(fitness_callbacks[3,i]);
+            selection_coeff = fitness_callbacks[4,i];
+            dominance_coeff = fitness_callbacks[5,i];
+            f_hom = 1+selection_coeff;
+            f_het = 1+selection_coeff*dominance_coeff;
+            if (selection_coeff == 0) {
+                sim.deregisterScriptBlock(s_id);
+                sim.registerLateEvent(NULL,
+                    "{dbg('selection disabled for m"+mut_type+" in p"+pop_id+"');}",
+                    g, g);
+            } else {
+                sim.registerFitnessCallback(s_id,
+                    "{if (homozygous) return "+f_hom+"; else return "+f_het+";}",
+                    mut_type, pop_id, start=g);
+                sim.registerLateEvent(NULL,
+                    "{dbg('selection onset for m"+mut_type+" in p"+pop_id+"');}",
+                    g, g);
+            }
+        }
+    }
+
     // Sample individuals.
     for (i in 0:(ncol(sampling_episodes)-1)) {
         pop = sampling_episodes[0,i];
@@ -288,6 +327,12 @@ function (void)setup(void) {
     }
 
     sim.registerLateEvent(NULL, "{dbg(self.source); end();}", G_end, G_end);
+}
+
+// Add `mut_type` mutation at `pos`, to a single individual in `pop`.
+function (void)add_mut(object$ mut_type, object$ pop, integer$ pos) {
+        targets = sample(pop.genomes, 1);
+        targets.addNewDrawnMutation(mut_type, pos);
 }
 """
 
@@ -331,13 +376,22 @@ def msprime_rr_to_slim_rr(recombination_map):
 def slim_makescript(
         script_file, trees_file,
         demographic_model, contig, samples,
+        mutation_types, extended_events,
         scaling_factor, check_coalescence, verbosity):
 
     pop_names = [pc.metadata["id"] for pc in demographic_model.population_configurations]
 
+    if mutation_types is None:
+        mutation_types = [stdpopsim.MutationType(weight=1.0)]
+
+    if extended_events is None:
+        extended_events = []
+
     # Reassign event times according to integral SLiM generations.
     # This collapses the time deltas used in HomSap/AmericanAdmixture_4B11.
     for event in demographic_model.demographic_events:
+        event.time = round(event.time / scaling_factor) * scaling_factor
+    for event in extended_events:
         event.time = round(event.time / scaling_factor) * scaling_factor
 
     # The demography debugger constructs event epochs, which we use
@@ -405,6 +459,26 @@ def slim_makescript(
                     for k in range(dd.num_populations):
                         migration_matrices[j][k][de.source] = 0
                         migration_matrices[j][de.source][k] = 0
+
+    drawn_mutations = []
+    fitness_callbacks = []
+    script_block_ids = {}
+    script_block_counter = 1
+    for ee in extended_events:
+        time = ee.time * demographic_model.generation_time
+        if isinstance(ee, stdpopsim.DrawMutation):
+            drawn_mutations.append((
+                time, ee.mutation_type_id, ee.population_id, ee.coordinate))
+        if isinstance(ee, stdpopsim.ChangeMutationFitness):
+            key = (ee.mutation_type_id, ee.population_id)
+            id = script_block_ids.get(key)
+            if id is None:
+                id = script_block_counter
+                script_block_counter += 1
+                script_block_ids[key] = id
+            fitness_callbacks.append((
+                time, id, ee.mutation_type_id, ee.population_id,
+                ee.selection_coeff, ee.dominance_coeff))
 
     printsc = functools.partial(print, file=script_file)
 
@@ -475,6 +549,20 @@ def slim_makescript(
 
         return "".join(s)
 
+    # Mutation type; genomic elements.
+    for i, m in enumerate(mutation_types, 1):
+        distrib_args = ", ".join(map(str, m.distribution_args))
+        printsc(f'    initializeMutationType("m{i}", {m.dominance_coeff}, ' +
+                f'"{m.distribution_type}", {distrib_args});')
+        if not m.convert_to_substitution:
+            # T is the default for WF simulations.
+            printsc(f'    m{i}.convertToSubstitution = F;')
+    mut_weights = ", ".join(str(m.weight) for m in mutation_types)
+    printsc(f'    initializeGenomicElementType("g1", ' +
+            f'seq(1, {len(mutation_types)}), c({mut_weights}));')
+    printsc()
+
+    # Epoch times.
     printsc('    // Time of epoch boundaries, in years before present.')
     printsc('    // The first epoch spans from INF to _T[0].')
     printsc('    defineConstant("_T", c({}));'.format(", ".join(map(str, T))))
@@ -553,6 +641,25 @@ def slim_makescript(
             ');')
     printsc()
 
+    # Drawn mutations.
+    printsc('    // Drawn mutations, one row for each mutation.')
+    printsc('    defineConstant("drawn_mutations", ' +
+            matrix2str(
+                drawn_mutations,
+                col_comment="time, mut_type, pop_id, genomic_coordinate") +
+            ');')
+    printsc()
+
+    # Fitness callbacks.
+    printsc('    // Fitness callbacks, one row for each callback.')
+    printsc('    defineConstant("fitness_callbacks", ' +
+            matrix2str(
+                fitness_callbacks,
+                col_comment="time, script_block_id, mut_type, pop_id, "
+                            "selection_coeff, dominance_coeff") +
+            ');')
+    printsc()
+
     # Sampling episodes.
     s_counts = collections.Counter([(s.population, s.time) for s in samples])
     sampling_episodes = []
@@ -602,6 +709,7 @@ class _SLiMEngine(stdpopsim.Engine):
 
     def simulate(
             self, demographic_model=None, contig=None, samples=None, seed=None,
+            mutation_types=None, extended_events=None,
             verbosity=0, slim_path=None, slim_script=False, slim_scaling_factor=10,
             slim_no_recapitation=False, slim_no_burnin=False, **kwargs):
         """
@@ -671,6 +779,7 @@ class _SLiMEngine(stdpopsim.Engine):
             slim_makescript(
                     script_file, ts_file.name,
                     demographic_model, contig, samples,
+                    mutation_types, extended_events,
                     slim_scaling_factor, check_coalescence, verbosity)
 
             script_file.flush()

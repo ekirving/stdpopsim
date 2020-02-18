@@ -26,3 +26,4 @@ from .catalog import drosophila_melanogaster  # NOQA
 from .catalog import canis_familiaris  # NOQA
 
 from . slim_engine import * # NOQA
+from . selection import * # NOQA
