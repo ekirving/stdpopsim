@@ -1,9 +1,12 @@
+import sys
 import random
 
 import stdpopsim
 
 
-def ai(rng):
+def adaptive_introgression(seed, verbosity=0):
+    rng = random.Random(seed)
+
     species = stdpopsim.get_species("HomSap")
     model = species.get_demographic_model("PapuansOutOfAfrica_10J19")
     contig = species.get_chunk(length=100*1000)  # , genetic_map="HapMapII_GRCh37")
@@ -74,7 +77,7 @@ def ai(rng):
     ts = engine.simulate(
             model, contig, samples,
             seed=rng.randrange(1, 2**32),
-            verbosity=2,
+            verbosity=verbosity,
             mutation_types=mutation_types,
             extended_events=extended_events,
             # slim_script=True,
@@ -82,11 +85,16 @@ def ai(rng):
             # slim_no_burnin=True,
             )
 
+    # Store parameters of interest in the ts file.
     ts = stdpopsim.ext.save_ext(
             ts, "adaptive_introgression",
-            species=species.id, model=model.id, T_mut=T_mut, T_sel=T_sel, s=s)
+            seed=seed, species=species.id, model=model.id, T_mut=T_mut, T_sel=T_sel, s=s)
 
 
 if __name__ == "__main__":
-    rng = random.Random(1234)
-    ai(rng)
+    if len(sys.argv) == 2:
+        seed = int(sys.argv[1])
+    else:
+        random.seed()
+        seed = random.randrange(1, 2**32)
+    adaptive_introgression(seed)
