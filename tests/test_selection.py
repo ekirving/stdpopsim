@@ -71,15 +71,20 @@ def ai(rng):
         ]
 
     engine = stdpopsim.get_engine("slim")
-    engine.simulate(
+    ts = engine.simulate(
             model, contig, samples,
+            seed=rng.randrange(1, 2**32),
             verbosity=2,
             mutation_types=mutation_types,
             extended_events=extended_events,
-            slim_script=True,
+            # slim_script=True,
             slim_no_recapitation=True,
             # slim_no_burnin=True,
             )
+
+    ts = stdpopsim.ext.save_ext(
+            ts, "adaptive_introgression",
+            species=species.id, model=model.id, T_mut=T_mut, T_sel=T_sel, s=s)
 
 
 if __name__ == "__main__":
