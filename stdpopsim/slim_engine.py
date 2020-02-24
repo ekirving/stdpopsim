@@ -67,6 +67,7 @@ initialize() {
     defineConstant("mutation_rate", Q * $mutation_rate);
     defineConstant("chromosome_length", $chromosome_length);
     defineConstant("trees_file", "$trees_file");
+    defineConstant("save_file", "$trees_file.save");
     defineConstant("check_coalescence", $check_coalescence);
 
     _recombination_rates = $recombination_rates;
@@ -87,6 +88,11 @@ _slim_lower = """
 function (void)dbg(string$ s, [integer$ debug_level = 2]) {
     if (verbosity >= debug_level)
         catn(sim.generation + ": " + s);
+}
+
+function (void)assert(logical$ cond, string$ msg) {
+    if (!cond)
+        stop(sim.generation + ": assertion failure: " + msg);
 }
 
 // Return the number of generations that separate t0 and t1.
@@ -123,6 +129,11 @@ function (void)end(void) {
             p.setMigrationRates(k, m);
         }
     }
+
+    // save/restore bookkeeping
+    sim.setValue("restore_j", 0);
+    sim.setValue("restore_k", -1);
+    sim.setValue("restore_function", F);
 }
 
 // Check if burn in has completed.
@@ -175,6 +186,44 @@ function (void)setup(void) {
     T_0 = max(_T);
     G = G_start + gdiff(T_0, _T);
     G_end = max(G)+1;
+
+    // Save/restore events. These should come before all other events.
+    if (length(drawn_mutations) > 0) {
+        for (i in 0:(ncol(drawn_mutations)-1)) {
+            save = drawn_mutations[4,i] == 1;
+            if (!save)
+                next;
+            g = G_start + gdiff(T_0, drawn_mutations[0,i]);
+            // Unconditionally save the state before the mutation is drawn.
+            sim.registerLateEvent(NULL, "{save();}", g, g);
+        }
+    }
+    if (length(condition_on_allele_frequency) > 0) {
+        for (i in 0:(ncol(condition_on_allele_frequency)-1)) {
+            g_start = G_start + gdiff(T_0, condition_on_allele_frequency[0,i]);
+            g_end = G_start + gdiff(T_0, condition_on_allele_frequency[1,i]);
+            mut_type = asInteger(condition_on_allele_frequency[2,i]);
+            pop_id = asInteger(condition_on_allele_frequency[3,i]);
+            op = op_types[asInteger(drop(condition_on_allele_frequency[4,i]))];
+            allele_frequency = condition_on_allele_frequency[5,i];
+            save = condition_on_allele_frequency[6,i] == 1;
+
+            if (save) {
+                // Save the state conditional on the allele frequency.
+                // If the condition isn't met, we restore.
+                sim.registerLateEvent(NULL,
+                    "{if (af(m"+mut_type+", p"+pop_id+") "+op+" "+allele_frequency+")" +
+                    " save(); else restore();}",
+                    g_start, g_start);
+                g_start = g_start + 1;
+            }
+
+            sim.registerLateEvent(NULL,
+                "{if (!(af(m"+mut_type+", p"+pop_id+") "+op+" "+allele_frequency+"))" +
+                " restore();}",
+                g_start, g_end);
+        }
+    }
 
     // Split events.
     if (length(subpopulation_splits) > 0 ) {
@@ -290,27 +339,24 @@ function (void)setup(void) {
     // Setup fitness callbacks.
     if (length(fitness_callbacks) > 0) {
         for (i in 0:(ncol(fitness_callbacks)-1)) {
-            g = G_start + gdiff(T_0, fitness_callbacks[0,i]);
-            s_id = asInteger(fitness_callbacks[1,i]);
+            g_start = G_start + gdiff(T_0, fitness_callbacks[0,i]);
+            g_end = G_start + gdiff(T_0, fitness_callbacks[1,i]);
             mut_type = asInteger(fitness_callbacks[2,i]);
             pop_id = asInteger(fitness_callbacks[3,i]);
             selection_coeff = fitness_callbacks[4,i];
             dominance_coeff = fitness_callbacks[5,i];
             f_hom = 1+selection_coeff;
             f_het = 1+selection_coeff*dominance_coeff;
-            if (selection_coeff == 0) {
-                sim.deregisterScriptBlock(s_id);
-                sim.registerLateEvent(NULL,
-                    "{dbg('selection disabled for m"+mut_type+" in p"+pop_id+"');}",
-                    g, g);
-            } else {
-                sim.registerFitnessCallback(s_id,
-                    "{if (homozygous) return "+f_hom+"; else return "+f_het+";}",
-                    mut_type, pop_id, start=g);
-                sim.registerLateEvent(NULL,
-                    "{dbg('selection onset for m"+mut_type+" in p"+pop_id+"');}",
-                    g, g);
-            }
+            sim.registerLateEvent(NULL,
+                "{dbg('s="+selection_coeff+", h="+dominance_coeff+
+                " for m"+mut_type+" in p"+pop_id+"');}",
+                g_start, g_start);
+            sim.registerLateEvent(NULL,
+                "{dbg('s,h defaults for m"+mut_type+" in p"+pop_id+"');}",
+                g_end, g_end);
+            sim.registerFitnessCallback(NULL,
+                "{if (homozygous) return "+f_hom+"; else return "+f_het+";}",
+                mut_type, pop_id, g_start, g_end);
         }
     }
 
@@ -334,6 +380,70 @@ function (void)add_mut(object$ mut_type, object$ pop, integer$ pos) {
         targets = sample(pop.genomes, 1);
         targets.addNewDrawnMutation(mut_type, pos);
 }
+
+// Return the allele frequency of a drawn mutation in the specified population.
+// Assumes there's only one mutation of the given type.
+function (float$)af(object$ mut_type, object$ pop) {
+    mut = sim.mutationsOfType(mut_type);
+    if (length(mut) == 0)
+        return 0.0;
+    return sim.mutationFrequencies(pop, mut);
+}
+
+// Save the state of the simulation.
+function (void)save(void) {
+    if (sim.getValue("restore_function")) {
+        // Don't save if we're in the restore() function.
+        return;
+    }
+    dbg("save");
+    sim.setValue("restore_k", 0);
+    sim.treeSeqOutput(save_file);
+}
+
+// Restore the simulation state.
+function (void)restore(void) {
+    j = sim.getValue("restore_j"); // total restores
+    k = sim.getValue("restore_k"); // restores since last save
+    assert(k >= 0, "restore() before save()");
+    sim.setValue("restore_j", j + 1);
+    sim.setValue("restore_k", k + 1);
+    g_restore = sim.generation;
+    sim.readFromPopulationFile(save_file);
+    dbg("restore "+j+"/"+k+" from gen="+g_restore);
+
+    /*
+     * The generation counter sim.generation has now been reset to the
+     * value it had when save() was called. There are two issues relating
+     * to event scheduling which must now be dealt with.
+     *
+     * 1. There may be additional late events for the generation in which
+     * restore() was called, and they are still scheduled to run.
+     * So we deactivate all script blocks to avoid unexpected problems.
+     * They will be automatically reactivated at the start of the next
+     * generation (see SLiM manual section 23.10).
+     */
+    sim.scriptBlocks.active = F;
+
+    /*
+     * 2. The late events below were run in the save() generation,
+     * but after the save() call. We execute these again here, because
+     * the next late events to run will be for sim.generation + 1.
+     * Note that the save() event is indistinguishable from the other
+     * late events in this genertion, so we set a flag `restore_function`
+     * to signal the save() function not to save again.
+     */
+    g = sim.generation;
+    sim.setValue("restore_function", T);
+    for (sb in sim.scriptBlocks) {
+        if (sb.type == "late" & g >= sb.start & g <= sb.end) {
+            self = sb;
+            executeLambda(sb.source);
+        }
+    }
+    sim.setValue("restore_function", F);
+}
+
 """
 
 
@@ -389,10 +499,20 @@ def slim_makescript(
 
     # Reassign event times according to integral SLiM generations.
     # This collapses the time deltas used in HomSap/AmericanAdmixture_4B11.
+    def fix_time(event):
+        for attr in ("time", "start_time", "end_time"):
+            if not hasattr(event, attr):
+                continue
+            t = getattr(event, attr)
+            if isinstance(t, stdpopsim.ext.GenerationAfter):
+                # Change t to the generation more recent than t.
+                t = max(0, t.time - scaling_factor)
+            t = round(t / scaling_factor) * scaling_factor
+            setattr(event, attr, t)
     for event in demographic_model.demographic_events:
-        event.time = round(event.time / scaling_factor) * scaling_factor
+        fix_time(event)
     for event in extended_events:
-        event.time = round(event.time / scaling_factor) * scaling_factor
+        fix_time(event)
 
     # The demography debugger constructs event epochs, which we use
     # to define the forwards-time events.
@@ -462,23 +582,27 @@ def slim_makescript(
 
     drawn_mutations = []
     fitness_callbacks = []
-    script_block_ids = {}
-    script_block_counter = 1
+    condition_on_allele_frequency = []
+    op_id = stdpopsim.ext.ConditionOnAlleleFrequency.op_id
     for ee in extended_events:
-        time = ee.time * demographic_model.generation_time
-        if isinstance(ee, stdpopsim.DrawMutation):
+        if isinstance(ee, stdpopsim.ext.DrawMutation):
+            time = ee.time * demographic_model.generation_time
+            save = 1 if ee.save else 0
             drawn_mutations.append((
-                time, ee.mutation_type_id, ee.population_id, ee.coordinate))
-        if isinstance(ee, stdpopsim.ChangeMutationFitness):
-            key = (ee.mutation_type_id, ee.population_id)
-            id = script_block_ids.get(key)
-            if id is None:
-                id = script_block_counter
-                script_block_counter += 1
-                script_block_ids[key] = id
+                time, ee.mutation_type_id, ee.population_id, ee.coordinate, save))
+        elif isinstance(ee, stdpopsim.ext.ChangeMutationFitness):
+            start_time = ee.start_time * demographic_model.generation_time
+            end_time = ee.end_time * demographic_model.generation_time
             fitness_callbacks.append((
-                time, id, ee.mutation_type_id, ee.population_id,
+                start_time, end_time, ee.mutation_type_id, ee.population_id,
                 ee.selection_coeff, ee.dominance_coeff))
+        elif isinstance(ee, stdpopsim.ext.ConditionOnAlleleFrequency):
+            start_time = ee.start_time * demographic_model.generation_time
+            end_time = ee.end_time * demographic_model.generation_time
+            save = 1 if ee.save else 0
+            condition_on_allele_frequency.append((
+                start_time, end_time, ee.mutation_type_id, ee.population_id,
+                op_id(ee.op), ee.allele_frequency, save))
 
     printsc = functools.partial(print, file=script_file)
 
@@ -646,7 +770,7 @@ def slim_makescript(
     printsc('    defineConstant("drawn_mutations", ' +
             matrix2str(
                 drawn_mutations,
-                col_comment="time, mut_type, pop_id, genomic_coordinate") +
+                col_comment="time, mut_type, pop_id, genomic_coordinate, save") +
             ');')
     printsc()
 
@@ -655,8 +779,21 @@ def slim_makescript(
     printsc('    defineConstant("fitness_callbacks", ' +
             matrix2str(
                 fitness_callbacks,
-                col_comment="time, script_block_id, mut_type, pop_id, "
+                col_comment="start_time, end_time, mut_type, pop_id, "
                             "selection_coeff, dominance_coeff") +
+            ');')
+    printsc()
+
+    # Allele frequency conditioning
+    op_types = ", ".join(
+            f"\"{op}\"" for op in stdpopsim.ext.ConditionOnAlleleFrequency.op_types)
+    printsc(f'    defineConstant("op_types", c({op_types}));')
+    printsc('    // Allele frequency conditioning, one row for each.')
+    printsc('    defineConstant("condition_on_allele_frequency", ' +
+            matrix2str(
+                condition_on_allele_frequency,
+                col_comment="start_time, end_time, mut_type, pop_id, "
+                            "op, allele_frequency, save") +
             ');')
     printsc()
 
