@@ -87,7 +87,7 @@ def adaptive_introgression(seed, verbosity=0):
 
     # Store parameters of interest in the ts file.
     ts = stdpopsim.ext.save_ext(
-            ts, "adaptive_introgression",
+            ts, "adaptive_introgression", "0.0.1",
             seed=seed, species=species.id, model=model.id, T_mut=T_mut, T_sel=T_sel, s=s)
 
 
