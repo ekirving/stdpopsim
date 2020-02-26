@@ -343,16 +343,16 @@ function (void)setup(void) {
             g_end = G_start + gdiff(T_0, fitness_callbacks[1,i]);
             mut_type = asInteger(fitness_callbacks[2,i]);
             pop_id = asInteger(fitness_callbacks[3,i]);
-            selection_coeff = fitness_callbacks[4,i];
+            selection_coeff = Q * fitness_callbacks[4,i];
             dominance_coeff = fitness_callbacks[5,i];
-            f_hom = 1+selection_coeff;
-            f_het = 1+selection_coeff*dominance_coeff;
+            f_hom = 1 + selection_coeff;
+            f_het = 1 + selection_coeff * dominance_coeff;
             sim.registerLateEvent(NULL,
                 "{dbg('s="+selection_coeff+", h="+dominance_coeff+
                 " for m"+mut_type+" in p"+pop_id+"');}",
                 g_start, g_start);
             sim.registerLateEvent(NULL,
-                "{dbg('s,h defaults for m"+mut_type+" in p"+pop_id+"');}",
+                "{dbg('s, h defaults for m"+mut_type+" in p"+pop_id+"');}",
                 g_end, g_end);
             sim.registerFitnessCallback(NULL,
                 "{if (homozygous) return "+f_hom+"; else return "+f_het+";}",
