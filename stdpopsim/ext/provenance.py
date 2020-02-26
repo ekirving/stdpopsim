@@ -13,8 +13,8 @@ def save_ext(ts, name, version, **kwargs):
             "name": name,
             "version": version,
             },
-        name: kwargs,
-        # "environment": stdpopsim.cli.get_environment()
+        "parameters": kwargs,
+        # "environment": tskit.provenance.get_environment()
     }
 
     tables = ts.dump_tables()
@@ -31,7 +31,7 @@ def load_ext(ts, name):
     for p in ts.provenances():
         d = json.loads(p.record)
         if d["software"]["name"] == name:
-            return d.get(name)
+            return d.get("parameters")
     return None
 
 
@@ -51,6 +51,33 @@ def load_ext_from_file(filename, name):
         record = ka["provenances/record"][i:j].tostring()
         d = json.loads(record)
         if d["software"]["name"] == name:
-            return d.get(name)
+            return d.get("parameters")
         i = j
     return None
+
+
+def dedup_slim_provenances(ts):
+    """
+    Remove redundant copies of SLiM's provenance records.
+
+    Duplicate SLiM provenance records may result from sim.treeSeqOutput()
+    followed by sim.readFromPopulationFile(), as is common when ensuring that
+    an introduced mutation is not lost.
+    """
+    tables = ts.dump_tables()
+    tables.provenances.clear()
+
+    # Find the last SLiM provenance entry.
+    i = -1
+    for p in ts.provenances():
+        d = json.loads(p.record)
+        if d["software"]["name"] == "SLiM":
+            i += 1
+    assert i >= 0, "SLiM provenance not found"
+
+    for j, p in enumerate(ts.provenances()):
+        if j < i:
+            continue
+        tables.provenances.add_row(p.record, p.timestamp)
+
+    return tables.tree_sequence()
