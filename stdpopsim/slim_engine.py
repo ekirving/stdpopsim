@@ -505,9 +505,9 @@ def slim_makescript(
                 continue
             t = getattr(event, attr)
             if isinstance(t, stdpopsim.ext.GenerationAfter):
-                # Change t to the generation more recent than t.
-                t = max(0, t.time - scaling_factor)
-            t = round(t / scaling_factor) * scaling_factor
+                t = (round(t.time / scaling_factor)-1) * scaling_factor
+            else:
+                t = round(t / scaling_factor) * scaling_factor
             setattr(event, attr, t)
     for event in demographic_model.demographic_events:
         fix_time(event)
