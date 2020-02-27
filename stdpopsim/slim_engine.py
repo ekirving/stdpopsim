@@ -298,24 +298,21 @@ def join_wrap(a, delim, wrap=80, newline="\n"):
     """
     b = []
     newline_length = sum(1 for ch in newline if ch not in "\r\n")
-    length = newline_length
+    column = newline_length
     for i, elm in enumerate(a):
         elm = str(elm)
-        if length + len(elm) + len(delim) > wrap:
+        if column + len(elm) + len(delim) > wrap:
             # strip off trailing whitespace before adding newline
             if len(b) > 0:
                 b.append(b.pop().rstrip())
             b.append(newline)
-            length = newline_length
+            column = newline_length
         b.append(elm)
         if i == len(a)-1:
             break
-        length += len(elm)
-        if length + len(delim) > wrap:
-            b.append(newline)
-            length = newline_length
+        column += len(elm)
         b.append(delim)
-        length += len(delim)
+        column += len(delim)
     return "".join(b)
 
 
