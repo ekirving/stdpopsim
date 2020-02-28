@@ -48,6 +48,7 @@ import itertools
 import collections
 import contextlib
 import random
+import textwrap
 
 import stdpopsim
 import numpy as np
@@ -292,30 +293,6 @@ function (void)setup(void) {
 """
 
 
-def join_wrap(a, delim, wrap=80, newline="\n"):
-    """
-    A line wrapping version of string.join().
-    """
-    b = []
-    newline_length = sum(1 for ch in newline if ch not in "\r\n")
-    column = newline_length
-    for i, elm in enumerate(a):
-        elm = str(elm)
-        if column + len(elm) + len(delim) > wrap:
-            # strip off trailing whitespace before adding newline
-            if len(b) > 0:
-                b.append(b.pop().rstrip())
-            b.append(newline)
-            column = newline_length
-        b.append(elm)
-        if i == len(a)-1:
-            break
-        column += len(elm)
-        b.append(delim)
-        column += len(delim)
-    return "".join(b)
-
-
 def msprime_rm_to_slim_rm(recombination_map):
     """
     Convert recombination map from start position coords to end position coords.
@@ -419,11 +396,15 @@ def slim_makescript(
     recomb_rates, recomb_ends = msprime_rm_to_slim_rm(contig.recombination_map)
     indent = 8*" "
     recomb_rates_str = (
-            f"c(\n{indent}" +
-            join_wrap(recomb_rates, ", ", newline=f"\n{indent}") + ")")
+            "c(\n" +
+            textwrap.fill(", ".join(map(str, recomb_rates)), width=80,
+                          initial_indent=indent, subsequent_indent=indent) +
+            ")")
     recomb_ends_str = (
-            f"c(\n{indent}" +
-            join_wrap(recomb_ends, ", ", newline=f"\n{indent}") + ")")
+            f"c(\n" +
+            textwrap.fill(", ".join(map(str, recomb_ends)), width=80,
+                          initial_indent=indent, subsequent_indent=indent) +
+            ")")
 
     printsc(string.Template(_slim_upper).substitute(
                 scaling_factor=scaling_factor if scaling_factor is not None else 1,
