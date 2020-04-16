@@ -919,12 +919,12 @@ class _SLiMEngine(stdpopsim.Engine):
         if extended_events is None:
             extended_events = []
 
-        # Ensure only non-neutral mutations are introduced by SLiM.
+        # Ensure only "weighted" mutations are introduced by SLiM.
         mutation_rate = contig.mutation_rate
-        neutral_frac = stdpopsim.ext.neutral_mutation_frac(mutation_types)
+        slim_frac = stdpopsim.ext.slim_mutation_frac(mutation_types)
         contig = stdpopsim.Contig(
                 recombination_map=contig.recombination_map,
-                mutation_rate=(1 - neutral_frac) * mutation_rate,
+                mutation_rate=slim_frac * mutation_rate,
                 genetic_map=contig.genetic_map)
 
         mktemp = functools.partial(tempfile.NamedTemporaryFile, mode="w")
@@ -960,7 +960,7 @@ class _SLiMEngine(stdpopsim.Engine):
             ts = pyslim.load(ts_file.name)
 
         ts = self._recap_and_rescale(
-                ts, seed, recap_epoch, contig, mutation_rate, neutral_frac,
+                ts, seed, recap_epoch, contig, mutation_rate, slim_frac,
                 slim_scaling_factor)
         return ts
 
@@ -1017,7 +1017,7 @@ class _SLiMEngine(stdpopsim.Engine):
         return ts.simplify(samples=list(nodes), filter_populations=False)
 
     def _recap_and_rescale(
-            self, ts, seed, recap_epoch, contig, mutation_rate, neutral_frac,
+            self, ts, seed, recap_epoch, contig, mutation_rate, slim_frac,
             slim_scaling_factor):
         """
         Apply post-SLiM transformations to ``ts``. This rescales node times,
@@ -1047,10 +1047,12 @@ class _SLiMEngine(stdpopsim.Engine):
 
         ts = self._simplify_remembered(ts)
 
-        # Add neutral fraction of mutations to SLiM part of trees.
-        ts = pyslim.SlimTreeSequence(msprime.mutate(
-            ts, rate=neutral_frac*mutation_rate, keep=True, random_seed=s2,
-            end_time=ts.slim_generation))
+        if slim_frac < 1:
+            # Add mutations to SLiM part of trees.
+            rate = (1 - slim_frac) * mutation_rate
+            ts = pyslim.SlimTreeSequence(msprime.mutate(
+                ts, rate=rate, keep=True, random_seed=s2,
+                end_time=ts.slim_generation))
 
         # Add mutations to recapitated part of trees.
         s3 = rng.randrange(1, 2**32)
@@ -1093,12 +1095,12 @@ class _SLiMEngine(stdpopsim.Engine):
         if extended_events is None:
             extended_events = []
 
-        # Only non-neutral mutations are introduced by SLiM.
+        # Only "weighted" mutations are introduced by SLiM.
         mutation_rate = contig.mutation_rate
-        neutral_frac = stdpopsim.ext.neutral_mutation_frac(mutation_types)
+        slim_frac = stdpopsim.ext.slim_mutation_frac(mutation_types)
         contig = stdpopsim.Contig(
                 recombination_map=contig.recombination_map,
-                mutation_rate=(1 - neutral_frac) * mutation_rate,
+                mutation_rate=slim_frac * mutation_rate,
                 genetic_map=contig.genetic_map)
 
         with open(os.devnull, "w") as script_file:
@@ -1109,7 +1111,7 @@ class _SLiMEngine(stdpopsim.Engine):
                     slim_scaling_factor, 1)
 
         ts = self._recap_and_rescale(
-                ts, seed, recap_epoch, contig, mutation_rate, neutral_frac,
+                ts, seed, recap_epoch, contig, mutation_rate, slim_frac,
                 slim_scaling_factor)
         return ts
 

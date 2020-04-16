@@ -5,28 +5,23 @@ import attr
 class MutationType(object):
     dominance_coeff = attr.ib(default=0.5, type=float)
     distribution_type = attr.ib(default="f", type=str)
-    distribution_args = attr.ib(factory=lambda: [0, ])
+    distribution_args = attr.ib(factory=lambda: [0])
     convert_to_substitution = attr.ib(default=True, type=bool)
+    # MutationTypes with non-zero weight will be simulated by SLiM,
+    # using rates obtained from the relative weights of the types.
+    # I.e. the weights will be used in the ``proportion`` parameter
+    # to SLiM's :func:`initializeGenomicElementType()`.
     weight = attr.ib(default=0, type=float)
 
 
-def neutral_mutation_frac(mutation_types):
+def slim_mutation_frac(mutation_types):
     """
-    Return the fraction of mutations in mutation_types that are neutral.
+    The fraction of mutations that should be added by SLiM.
+    The remainder are added by msprime.mutate() once the SLiM part
+    of the simulation is complete.
     """
-    neutral_weight = 0
-    total_weight = 0
-    for mut_type in mutation_types:
-        assert isinstance(mut_type, MutationType)
-        if mut_type.distribution_type == "f" and mut_type.distribution_args[0] == 0:
-            # we define neutral mutations as "f" mutations with s=0
-            neutral_weight += mut_type.weight
-        total_weight += mut_type.weight
-    if total_weight == 0:
-        neutral_frac = 1
-    else:
-        neutral_frac = neutral_weight / total_weight
-    return neutral_frac
+    weighted = any(mut_type.weight > 0 for mut_type in mutation_types)
+    return 1 if weighted else 0
 
 
 def KimDFE():
