@@ -79,10 +79,16 @@ class ConditionOnAlleleFrequency(ExtendedEvent):
 
     op_types = ("<", "<=", ">", ">=")
 
-    @op.validator
-    def _op_validator(self, _attr, op):
-        if op not in self.op_types:
-            raise ValueError(f"Invalid conditioning op `{op}`")
+    def __attrs_post_init__(self):
+        if self.op not in self.op_types:
+            raise ValueError(f"Invalid conditioning op `{self.op}`")
+        if not (0 <= self.allele_frequency <= 1):
+            raise ValueError("Must have 0 <= allele_frequency <= 1.")
+        if ((self.op == "<" and self.allele_frequency == 0) or
+           (self.op == ">" and self.allele_frequency == 1)):
+            raise ValueError(
+                    f"allele_frequency {self.op} {self.allele_frequency} "
+                    f"would require the allele frequency to be out of range.")
 
     @classmethod
     def op_id(cls, op):

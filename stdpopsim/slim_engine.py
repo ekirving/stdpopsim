@@ -369,8 +369,6 @@ function (void)end(void) {
             pop_id = asInteger(fitness_callbacks[3,i]);
             selection_coeff = Q * fitness_callbacks[4,i];
             dominance_coeff = fitness_callbacks[5,i];
-            f_hom = 1 + selection_coeff;
-            f_het = 1 + selection_coeff * dominance_coeff;
             sim.registerLateEvent(NULL,
                 "{dbg('s="+selection_coeff+", h="+dominance_coeff+
                 " for m"+mut_type+" in p"+pop_id+"');}",
@@ -378,6 +376,11 @@ function (void)end(void) {
             sim.registerLateEvent(NULL,
                 "{dbg('s, h defaults for m"+mut_type+" in p"+pop_id+"');}",
                 g_end, g_end);
+            /* We explicitly format() here to prevent integral-valued floats
+             * from getting converted to integers during string interpolation
+             * (this triggers a type error when the fitness callback runs). */
+            f_hom = format("%e", 1 + selection_coeff);
+            f_het = format("%e", 1 + selection_coeff * dominance_coeff);
             sim.registerFitnessCallback(NULL,
                 "{if (homozygous) return "+f_hom+"; else return "+f_het+";}",
                 mut_type, pop_id, g_start, g_end);
@@ -615,6 +618,8 @@ def slim_makescript(
             condition_on_allele_frequency.append((
                 start_time, end_time, ee.mutation_type_id, ee.population_id,
                 op_id(ee.op), ee.allele_frequency, save))
+        else:
+            raise ValueError(f"Unknown extended event type {type(ee)}")
 
     printsc = functools.partial(print, file=script_file)
 
