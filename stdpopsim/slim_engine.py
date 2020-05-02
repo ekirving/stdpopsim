@@ -40,6 +40,7 @@ How backwards-time demographic events are mapped to forwards-time SLiM code:
 
 import os
 import sys
+import copy
 import string
 import tempfile
 import subprocess
@@ -511,6 +512,10 @@ def slim_makescript(
         scaling_factor, burn_in):
 
     pop_names = [pc.metadata["id"] for pc in demographic_model.population_configurations]
+    # Use copies of these so that the time frobbing below doesn't have
+    # side-effects in the caller's model.
+    demographic_events = copy.deepcopy(demographic_model.demographic_events)
+    extended_events = copy.deepcopy(extended_events)
 
     # Reassign event times according to integral SLiM generations.
     # This collapses the time deltas used in HomSap/AmericanAdmixture_4B11.
@@ -523,8 +528,9 @@ def slim_makescript(
                 t = (round(t.time / scaling_factor)-1) * scaling_factor
             else:
                 t = round(t / scaling_factor) * scaling_factor
+            assert t >= 0, f"{attr}: {getattr(event, attr)}"
             setattr(event, attr, t)
-    for event in demographic_model.demographic_events:
+    for event in demographic_events:
         fix_time(event)
     for event in extended_events:
         fix_time(event)
@@ -534,7 +540,7 @@ def slim_makescript(
     dd = msprime.DemographyDebugger(
             population_configurations=demographic_model.population_configurations,
             migration_matrix=demographic_model.migration_matrix,
-            demographic_events=demographic_model.demographic_events)
+            demographic_events=demographic_events)
 
     epochs = sorted(dd.epochs, key=lambda e: e.start_time, reverse=True)
     T = [round(e.start_time*demographic_model.generation_time) for e in epochs]
