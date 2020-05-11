@@ -223,23 +223,25 @@ function (void)end(void) {
             mut_type = asInteger(condition_on_allele_frequency[2,i]);
             pop_id = asInteger(condition_on_allele_frequency[3,i]);
             op = op_types[asInteger(drop(condition_on_allele_frequency[4,i]))];
-            allele_frequency = condition_on_allele_frequency[5,i];
+            af = condition_on_allele_frequency[5,i];
             save = condition_on_allele_frequency[6,i] == 1;
 
             if (save) {
                 // Save the state conditional on the allele frequency.
                 // If the condition isn't met, we restore.
                 sim.registerLateEvent(NULL,
-                    "{if (af(m"+mut_type+", p"+pop_id+") "+op+" "+allele_frequency+")" +
+                    "{if (af(m"+mut_type+", p"+pop_id+") "+op+" "+af+")" +
                     " save(); else restore();}",
                     g_start, g_start);
                 g_start = g_start + 1;
             }
 
-            sim.registerLateEvent(NULL,
-                "{if (!(af(m"+mut_type+", p"+pop_id+") "+op+" "+allele_frequency+"))" +
-                " restore();}",
-                g_start, g_end);
+            if (g_start <= g_end) {
+                sim.registerLateEvent(NULL,
+                    "{if (!(af(m"+mut_type+", p"+pop_id+") "+op+" "+af+"))" +
+                    " restore();}",
+                    g_start, g_end);
+            }
         }
     }
 
@@ -717,7 +719,7 @@ def slim_makescript(
             # T is the default for WF simulations.
             printsc(f'    m{i}.convertToSubstitution = F;')
     mut_weights = ", ".join(str(m.weight) for m in mutation_types)
-    printsc(f'    initializeGenomicElementType("g1", ' +
+    printsc('    initializeGenomicElementType("g1", ' +
             f'seq(1, {len(mutation_types)}), c({mut_weights}));')
     printsc()
 

@@ -528,7 +528,56 @@ class TestMutationTypes(unittest.TestCase, PiecewiseConstantSizeMixin):
 
 
 @unittest.skipIf(IS_WINDOWS, "SLiM not available on windows")
+class TestDrawMutation(unittest.TestCase, PiecewiseConstantSizeMixin):
+
+    def test_draw_mutation_save(self):
+        extended_events = [
+                stdpopsim.ext.DrawMutation(
+                    time=self.T_mut, mutation_type_id=self.mut_id,
+                    population_id=0, coordinate=100, save=True),
+                ]
+        engine = stdpopsim.get_engine("slim")
+        engine.simulate(
+                demographic_model=self.model, contig=self.contig,
+                samples=self.samples, mutation_types=self.mutation_types,
+                extended_events=extended_events, dry_run=True)
+
+    def test_draw_mutation_no_save(self):
+        extended_events = [
+                stdpopsim.ext.DrawMutation(
+                    time=self.T_mut, mutation_type_id=self.mut_id,
+                    population_id=0, coordinate=100),
+                ]
+        engine = stdpopsim.get_engine("slim")
+        engine.simulate(
+                demographic_model=self.model, contig=self.contig,
+                samples=self.samples, mutation_types=self.mutation_types,
+                extended_events=extended_events, dry_run=True)
+
+
+@unittest.skipIf(IS_WINDOWS, "SLiM not available on windows")
 class TestAlleleFrequencyConditioning(unittest.TestCase, PiecewiseConstantSizeMixin):
+
+    def test_save_point_creation(self):
+        extended_events = [
+                stdpopsim.ext.DrawMutation(
+                    time=self.T_mut, mutation_type_id=self.mut_id,
+                    population_id=0, coordinate=100, save=True),
+                stdpopsim.ext.ConditionOnAlleleFrequency(
+                    start_time=stdpopsim.ext.GenerationAfter(self.T_mut),
+                    end_time=0,
+                    mutation_type_id=self.mut_id, population_id=0,
+                    op=">", allele_frequency=0, save=True),
+                stdpopsim.ext.ConditionOnAlleleFrequency(
+                    start_time=self.T_mut // 2, end_time=self.T_mut // 2,
+                    mutation_type_id=self.mut_id, population_id=0,
+                    op=">", allele_frequency=0, save=True),
+                ]
+        engine = stdpopsim.get_engine("slim")
+        engine.simulate(
+                demographic_model=self.model, contig=self.contig,
+                samples=self.samples, mutation_types=self.mutation_types,
+                extended_events=extended_events, dry_run=True)
 
     def test_drawn_mutation_not_lost(self):
         extended_events = [
@@ -605,6 +654,26 @@ class TestAlleleFrequencyConditioning(unittest.TestCase, PiecewiseConstantSizeMi
         for op in ("==", "=", "!=", {}, ""):
             id = stdpopsim.ext.ConditionOnAlleleFrequency.op_id(op)
             self.assertEqual(id, -1)
+
+    def test_conditioning_without_save(self):
+        extended_events = [
+                stdpopsim.ext.DrawMutation(
+                    time=self.T_mut, mutation_type_id=self.mut_id,
+                    population_id=0, coordinate=100),
+                stdpopsim.ext.ConditionOnAlleleFrequency(
+                    start_time=stdpopsim.ext.GenerationAfter(self.T_mut),
+                    end_time=0,
+                    mutation_type_id=self.mut_id, population_id=0,
+                    op=">=", allele_frequency=1),
+                ]
+        engine = stdpopsim.get_engine("slim")
+        with self.assertRaises(stdpopsim.SLiMException):
+            # TODO: get this to fail using dry_run=True
+            engine.simulate(
+                    demographic_model=self.model, contig=self.contig,
+                    samples=self.samples, mutation_types=self.mutation_types,
+                    extended_events=extended_events, slim_scaling_factor=10,
+                    slim_burn_in=0.1)
 
 
 @unittest.skipIf(IS_WINDOWS, "SLiM not available on windows")
