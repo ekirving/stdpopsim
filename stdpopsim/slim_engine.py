@@ -226,6 +226,11 @@ function (void)end(void) {
             af = condition_on_allele_frequency[5,i];
             save = condition_on_allele_frequency[6,i] == 1;
 
+            if (g_start > g_end) {
+                err("Attempt to register AF conditioning callback with g_start="+
+                    g_start+" > g_end="+g_end);
+            }
+
             if (save) {
                 // Save the state conditional on the allele frequency.
                 // If the condition isn't met, we restore.
@@ -285,8 +290,10 @@ function (void)end(void) {
                     }
 
                     if (growth_phase_start >= growth_phase_end) {
-                        // Some demographic models have duplicate epoch times,
-                        // which should be ignored.
+                        // Demographic models could have duplicate epoch times,
+                        // which should be fixed.
+                        warn("growth_phase_start="+growth_phase_start+
+                             " >= growth_phase_end="+growth_phase_end);
                         next;
                     }
 
@@ -372,6 +379,12 @@ function (void)end(void) {
             pop_id = asInteger(fitness_callbacks[3,i]);
             selection_coeff = Q * fitness_callbacks[4,i];
             dominance_coeff = fitness_callbacks[5,i];
+
+            if (g_start > g_end) {
+                err("Attempt to register fitness callback with g_start="+
+                    g_start+" > g_end="+g_end);
+            }
+
             sim.registerLateEvent(NULL,
                 "{dbg('s="+selection_coeff+", h="+dominance_coeff+
                 " for m"+mut_type+" in p"+pop_id+"');}",
@@ -517,21 +530,25 @@ def slim_makescript(
     # Use copies of these so that the time frobbing below doesn't have
     # side-effects in the caller's model.
     demographic_events = copy.deepcopy(demographic_model.demographic_events)
-    extended_events = copy.deepcopy(extended_events)
+    if extended_events is None:
+        extended_events = []
+    else:
+        extended_events = copy.deepcopy(extended_events)
 
     # Reassign event times according to integral SLiM generations.
-    # This collapses the time deltas used in HomSap/AmericanAdmixture_4B11.
+    # This collapses the time deltas used in HomSap/AmericanAdmixture_4B11,
+    # and calculates times for GenerationAfter objects.
     def fix_time(event):
         for attr in ("time", "start_time", "end_time"):
             if not hasattr(event, attr):
                 continue
             t = getattr(event, attr)
+            t_rounded = round(float(t) / scaling_factor) * scaling_factor
             if isinstance(t, stdpopsim.ext.GenerationAfter):
-                t = (round(t.time / scaling_factor)-1) * scaling_factor
-            else:
-                t = round(t / scaling_factor) * scaling_factor
-            assert t >= 0, f"{attr}: {getattr(event, attr)}"
-            setattr(event, attr, t)
+                t_rounded -= scaling_factor
+            if t_rounded < 0:
+                raise ValueError(f"Bad {attr}: {getattr(event, attr)}")
+            setattr(event, attr, t_rounded)
     for event in demographic_events:
         fix_time(event)
     for event in extended_events:
@@ -608,6 +625,23 @@ def slim_makescript(
     condition_on_allele_frequency = []
     op_id = stdpopsim.ext.ConditionOnAlleleFrequency.op_id
     for ee in extended_events:
+        if hasattr(ee, "mutation_type_id"):
+            mt_id = getattr(ee, "mutation_type_id")
+            cls_name = ee.__class__.__name__
+            if mutation_types is None:
+                raise ValueError(
+                        f"Invalid {cls_name} event. No mutation types defined.")
+            if not (0 < ee.mutation_type_id <= len(mutation_types)):
+                # FIXME: use zero-based indexes
+                raise ValueError(
+                        f"Invalid {cls_name} event with mutation type id {mt_id}.")
+        if hasattr(ee, "start_time") and hasattr(ee, "end_time"):
+            # Now that GenerationAfter times have been accounted for, we can
+            # properly catch invalid start/end times.
+            start_time = getattr(ee, "start_time")
+            end_time = getattr(ee, "end_time")
+            stdpopsim.ext.validate_time_range(start_time, end_time)
+
         if isinstance(ee, stdpopsim.ext.DrawMutation):
             time = ee.time * demographic_model.generation_time
             save = 1 if ee.save else 0
@@ -628,6 +662,17 @@ def slim_makescript(
                 op_id(ee.op), ee.allele_frequency, save))
         else:
             raise ValueError(f"Unknown extended event type {type(ee)}")
+
+    # Check that drawn mutations exist for extended events that need them.
+    drawn_mut_type_ids = {mt_id for _, mt_id, _, _, _ in drawn_mutations}
+    for ee in extended_events:
+        if (isinstance(ee, stdpopsim.ext.ChangeMutationFitness) or
+           isinstance(ee, stdpopsim.ext.ConditionOnAlleleFrequency)):
+            if ee.mutation_type_id not in drawn_mut_type_ids:
+                cls_name = ee.__class__.__name__
+                raise ValueError(
+                        f"Invalid {cls_name} event. No drawn mutation for "
+                        "mutation type id {ee.mutation_type_id}")
 
     printsc = functools.partial(print, file=script_file)
 
@@ -710,7 +755,12 @@ def slim_makescript(
 
         return "".join(s)
 
+    if mutation_types is None:
+        mutation_types = [stdpopsim.ext.MutationType()]
+
     # Mutation type; genomic elements.
+    # FIXME: Change this to use zero-based indices---one-based indices are
+    #        inconsistent with everything else, e.g. population IDs.
     for i, m in enumerate(mutation_types, 1):
         distrib_args = ", ".join(map(str, m.distribution_args))
         printsc(f'    initializeMutationType("m{i}", {m.dominance_coeff}, ' +
@@ -926,12 +976,6 @@ class _SLiMEngine(stdpopsim.Engine):
 
         run_slim = not slim_script
 
-        if mutation_types is None:
-            mutation_types = [stdpopsim.ext.MutationType()]
-
-        if extended_events is None:
-            extended_events = []
-
         # Ensure only "weighted" mutations are introduced by SLiM.
         mutation_rate = contig.mutation_rate
         slim_frac = stdpopsim.ext.slim_mutation_frac(mutation_types)
@@ -1102,12 +1146,6 @@ class _SLiMEngine(stdpopsim.Engine):
             should be consulted to determine if it's behaviour is appropriate
             for your case.
         """
-        if mutation_types is None:
-            mutation_types = [stdpopsim.ext.MutationType()]
-
-        if extended_events is None:
-            extended_events = []
-
         # Only "weighted" mutations are introduced by SLiM.
         mutation_rate = contig.mutation_rate
         slim_frac = stdpopsim.ext.slim_mutation_frac(mutation_types)
